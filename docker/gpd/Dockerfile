@@ -3,22 +3,22 @@ FROM ${from}
 ARG PYTHON_VERSION=3.7
 ARG ROS_DISTRO=noetic
 ARG NJOBS=1
-ARG GIT_USER "MatteoPerotto"
-ARG GIT_EMAIL "perotto.matteo@gmail.com"
+ARG GIT_USER="MatteoPerotto"
+ARG GIT_EMAIL="perotto.matteo@gmail.com"
+
+
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=all
-
 ENV TZ=Europe/Rome
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV LANGUAGE=en_US.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
-
 ENV WS_DIR=/home/user/workspace
 ENV CATKIN_WS_DIR=${WS_DIR}/catkin_ws
 ENV WS_INSTALL=${WS_DIR}/install
 ENV WS_SOURCES=${WS_DIR}/sources
-ARG WS_BIN=${WS_SOURCES}/bin
+ENV WS_BIN=${WS_SOURCES}/bin
 
 # Change default shell to bash
 SHELL ["/bin/bash", "-c"]
