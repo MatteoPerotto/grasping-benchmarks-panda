@@ -32,8 +32,6 @@ from grasping_benchmarks_ros.srv import UserCmd, UserCmdRequest, UserCmdResponse
 from grasping_benchmarks_ros.srv import GraspPlanner, GraspPlannerRequest, GraspPlannerResponse
 from grasping_benchmarks_ros.msg import BenchmarkGrasp
 
-from panda_ros_common.srv import PandaGrasp, PandaGraspRequest, PandaGraspResponse
-
 import numpy as np
 import re
 
@@ -51,7 +49,7 @@ from shape_completion import complete_point_cloud
 
 
 class GraspingBenchmarksManager(object):
-    def __init__(self, grasp_planner_service_name, grasp_planner_service, user_cmd_service_name, panda_service_name, verbose=False):
+    def __init__(self, grasp_planner_service_name, grasp_planner_service, user_cmd_service_name, robot_service_name, verbose=False):
 
         self._verbose = verbose
 
@@ -62,13 +60,6 @@ class GraspingBenchmarksManager(object):
         rospy.wait_for_service(grasp_planner_service_name, timeout=30.0)
         self._grasp_planner = rospy.ServiceProxy(grasp_planner_service_name, GraspPlanner)
         rospy.loginfo("...Connected with service {}".format(grasp_planner_service_name))
-
-        # --- panda service --- #
-        panda_service_name =  "/panda_grasp_server/panda_grasp"
-        rospy.loginfo("GraspingBenchmarksManager: Waiting for panda control service...")
-        rospy.wait_for_service(panda_service_name, timeout=60.0)
-        self._panda = rospy.ServiceProxy(panda_service_name, PandaGrasp)
-        rospy.loginfo("...Connected with service {}".format(panda_service_name))
 
         # --- subscribers to camera topics --- #
         self._cam_info_sub = message_filters.Subscriber('/camera/aligned_depth_to_color/camera_info', CameraInfo)
@@ -513,10 +504,10 @@ if __name__ == "__main__":
     grasp_planner_service_name = rospy.get_param("~grasp_planner_service_name")
     grasp_planner_service = rospy.get_param("~grasp_planner_service")
     new_grasp_service_name = rospy.get_param("~user_cmd_service_name")
-    panda_service_name = "panda_grasp" # rospy.get_param("/panda_service_name")
+    robot_service_name = "panda_grasp" # rospy.get_param("/robot_service_name")
 
     # Instantiate benchmark client class
-    bench_manager = GraspingBenchmarksManager(grasp_planner_service_name, grasp_planner_service, new_grasp_service_name, panda_service_name, verbose=True)
+    bench_manager = GraspingBenchmarksManager(grasp_planner_service_name, grasp_planner_service, new_grasp_service_name, robot_service_name, verbose=True)
 
     # Spin forever.
     rospy.spin()
