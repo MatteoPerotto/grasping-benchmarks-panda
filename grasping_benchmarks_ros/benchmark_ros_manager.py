@@ -18,38 +18,28 @@ Its features are:
 import rospy
 import warnings
 import message_filters
-import tf2_ros
 import sensor_msgs.point_cloud2
+import numpy as np
+import re
+import tf2_ros
+
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from sensor_msgs.point_cloud2 import read_points
 from geometry_msgs.msg import Transform, Pose, PoseStamped, TransformStamped
 from std_msgs.msg import Bool
 from typing import List
-
-from grasping_benchmarks.base.transformations import quaternion_to_matrix, matrix_to_quaternion
-
+from grasping_benchmarks.base.transformations import quaternion_to_matrix, matrix_to_quaternion, axis_angle_to_quaternion
 from grasping_benchmarks_ros.srv import UserCmd, UserCmdRequest, UserCmdResponse
 from grasping_benchmarks_ros.srv import GraspPlanner, GraspPlannerRequest, GraspPlannerResponse
 from grasping_benchmarks_ros.msg import BenchmarkGrasp
+from shape_completion import complete_point_cloud
 
-import numpy as np
-import re
+import yarp 
 
 NUMBER_OF_CANDIDATES = 5
 
-NEW_MSG = {
-"new_data": False,
-"data": {},
-}
-
-from shape_completion import complete_point_cloud
-# import sys
-# sys.path.append('/workspace/sources/shape_completion_network')
-# from shape_completion_lundell import *
-
-
 class GraspingBenchmarksManager(object):
-    def __init__(self, grasp_planner_service_name, grasp_planner_service, user_cmd_service_name, robot_service_name, verbose=False):
+    def __init__(self, grasp_planner_service_name, grasp_planner_service, user_cmd_service_name, robot_name, verbose=False):
 
         self._verbose = verbose
 
@@ -61,30 +51,33 @@ class GraspingBenchmarksManager(object):
         self._grasp_planner = rospy.ServiceProxy(grasp_planner_service_name, GraspPlanner)
         rospy.loginfo("...Connected with service {}".format(grasp_planner_service_name))
 
+        # --- robot service --- #
+        robot_service_name = "/icub_grasp_server/rh_grasp"
+        rospy.loginfo("GraspingBenchmarksManager: Waiting for robot control service...")
+        rospy.wait_for_service(robot_service_name, timeout=60.0)
+        self._robot = rospy.ServiceProxy(robot_service_name, Transform)
+        rospy.loginfo("...Connected with service {}".format(robot_service_name))
+
         # --- subscribers to camera topics --- #
         self._cam_info_sub = message_filters.Subscriber('/camera/aligned_depth_to_color/camera_info', CameraInfo)
         self._rgb_sub = message_filters.Subscriber('/camera/color/image_raw', Image)
         self._depth_sub = message_filters.Subscriber('/camera/aligned_depth_to_color/image_raw', Image)
-        try:
-            rospy.wait_for_message('/objects_cloud', PointCloud2, 1)
-            self._pc_sub = message_filters.Subscriber('/objects_cloud', PointCloud2)
-            rospy.wait_for_message('/plane_cloud', PointCloud2, 1)
-            self._background_pc_sub = message_filters.Subscriber('/plane_cloud', PointCloud2)
-        except rospy.exceptions.ROSException:
-            self._pc_sub = message_filters.Subscriber('/camera/depth_registered/points', PointCloud2)
-            # If there is no segmentation node, there is no foreground/background separation
-            self._background_pc_sub = message_filters.Subscriber('/camera/depth_registered/points', PointCloud2)
 
-        self._seg_sub = rospy.Subscriber('rgb/image_seg', Image, self.seg_img_callback, queue_size=10)
+        rospy.wait_for_message('/objects_cloud', PointCloud2, 1)
+        self._pc_sub = message_filters.Subscriber('/objects_cloud', PointCloud2)
+        rospy.wait_for_message('/plane_cloud', PointCloud2, 1)
+        self._background_pc_sub = message_filters.Subscriber('/plane_cloud', PointCloud2)
+
+        #self._seg_sub = rospy.Subscriber('rgb/image_seg', Image, self.seg_img_callback, queue_size=10)
+
+        # --- robot/camera transform listener --- #
+        self._tfBuffer = tf2_ros.buffer.Buffer()
+        listener = tf2_ros.transform_listener.TransformListener(self._tfBuffer)
 
         # --- camera data synchronizer --- #
         self._tss = message_filters.ApproximateTimeSynchronizer([self._cam_info_sub, self._rgb_sub, self._depth_sub, self._pc_sub, self._background_pc_sub],
                                                                 queue_size=1, slop=0.5)
         self._tss.registerCallback(self._camera_data_callback)
-
-        # --- robot/camera transform listener --- #
-        self._tfBuffer = tf2_ros.buffer.Buffer()
-        listener = tf2_ros.transform_listener.TransformListener(self._tfBuffer)
 
         # --- camera messages --- #
         self._cam_info_msg = None
@@ -93,15 +86,20 @@ class GraspingBenchmarksManager(object):
         self._pc_msg = None
         self._background_pc_msg = None
         self._camera_pose = TransformStamped()
-        self._aruco_board_pose = TransformStamped()
-        self._root_reference_frame = 'panda_link0'
-        self._aruco_reference_frame = 'aruco_board'
-        self._enable_grasp_filter = False
-
-        self._seg_msg = NEW_MSG
+        self._root_reference_frame = 'robot'
 
         self._new_camera_data = False
         self._abort = False
+        
+        # --- initialize camera pose to identity --- #
+        self._camera_pose.transform.translation.x = 0
+        self._camera_pose.transform.translation.y = 0 
+        self._camera_pose.transform.translation.z = 0
+        self._camera_pose.transform.rotation.w = 1 
+        self._camera_pose.transform.rotation.x = 0
+        self._camera_pose.transform.rotation.y = 0 
+        self._camera_pose.transform.rotation.z = 0 
+        
 
     # ---------------------- #
     # Grasp planning handler #
@@ -182,7 +180,7 @@ class GraspingBenchmarksManager(object):
                                 transform.translation.y,
                                 transform.translation.z]
             points=[]
-            for p_in in read_points(pc_in, skip_nans=True, field_names=("x", "y", "z", "rgb")):
+            for p_in in read_points(pc_in, self._cam_info_msg, skip_nans=True, field_names=("x", "y", "z", "rgb")):
                 p_transformed = np.dot(tr_matrix, np.array([p_in[0], p_in[1], p_in[2], 1.0]))
                 p_out=[]
                 p_out.append(p_transformed[0])
@@ -231,13 +229,7 @@ class GraspingBenchmarksManager(object):
 
             if self._verbose:
                 print("... send request to server ...")
-
-            # Fill in the arcuo board wrt world reference frame
-
-            planner_req.aruco_board.position = self._aruco_board_pose.transform.translation
-            planner_req.aruco_board.orientation = self._aruco_board_pose.transform.rotation
-            planner_req.grasp_filter_flag = self._enable_grasp_filter
-
+        
             # Plan for grasps
             try:
                 reply = self._grasp_planner(planner_req)
@@ -255,12 +247,13 @@ class GraspingBenchmarksManager(object):
             # If we are required to grasp, test the feasibility of the candidates first
             # and send the best grasp between the feasible candidates
             if req.cmd.data == "grasp":
-                feasible_candidates = self.get_feasible_grasps(reply.grasp_candidates)
+                #feasible_candidates = self.get_feasible_grasps(reply.grasp_candidates)
                 rospy.loginfo(f"Feasible candidates: {len(feasible_candidates)}/{len(reply.grasp_candidates)}")
                 if not len(feasible_candidates):
                     return Bool(False)
                 else:
-                    return self.execute_grasp(self.get_best_grasp(feasible_candidates))
+                    #return self.execute_grasp(self.get_best_grasp(feasible_candidates))\
+                    rospy.loginfo(f"Fake grasp execution")
             else:
                 return self.dump_grasps(reply.grasp_candidates)
 
@@ -387,14 +380,7 @@ class GraspingBenchmarksManager(object):
         bool
             True if the candidate is feasible, false otherwise
         """
-
-        grasp_request = PandaGraspRequest()
-        grasp_request.grasp = grasp.pose
-        grasp_request.width = grasp.width
-        grasp_request.plan_only = True
-
-        grasp_reply = self._panda(grasp_request)
-        return grasp_reply.success
+        return False
 
     def execute_grasp(self, grasp: BenchmarkGrasp):
         """Assumes the grasp pose is already in the root reference frame
@@ -403,21 +389,7 @@ class GraspingBenchmarksManager(object):
             - grasp (obj: BenchmarkGrasp msg)
         """
 
-        panda_req = PandaGraspRequest()
-        panda_req.grasp = grasp.pose
-        panda_req.width = grasp.width
-
-        if self._verbose:
-            print("request to panda is: \n{}" .format(panda_req))
-
-        try:
-            reply = self._panda(panda_req)
-            print("Service {} reply is: \n{}" .format(self._panda.resolved_name, reply))
-            return Bool(True)
-
-        except rospy.ServiceException as e:
-            print("Service {} call failed: {}" .format(self._panda.resolved_name, e))
-            return Bool(False)
+        return Bool(False)
 
     # ------------------- #
     # Camera data handler #
@@ -442,25 +414,6 @@ class GraspingBenchmarksManager(object):
             warnings.warn("tf listener could not get camera pose. Are you publishing camera poses on tf?")
             self._camera_pose = TransformStamped()
             self._camera_pose.transform.rotation.w = 1.0
-
-        # Get the aruco board transform wrt the root reference frame of this class.
-        # If the aruco board is not found an exception is thrown and   _enable_grasp_filter
-        # is set false in order to avoid filtering in plan_grasp function in graspnet_grasp_planner.py
-        try:
-            self._aruco_board_pose = self._tfBuffer.lookup_transform(self._root_reference_frame, self._aruco_reference_frame, rospy.Time(),rospy.Duration(1.0))
-            self._enable_grasp_filter = True
-
-        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            rospy.logwarn("tf listener could not get aruco board pose. Are you publishing aruco board poses on tf?")
-            self._enable_grasp_filter = False
-
-
-    def seg_img_callback(self, data):
-        if self._verbose:
-            print("Got segmentation image...")
-
-        self._seg_msg['data'] = data
-        self._seg_msg['new_data'] = True
 
     # ------------------- #
     # Camera data handler #
@@ -495,8 +448,29 @@ class GraspingBenchmarksManager(object):
 
         return target_pc[:, :-1]
 
+    # ------------------- #
+    # Ask iCub to move    #
+    # ------------------- #
+    def go_to_pose(cart, position, orientation):
+
+        position_yarp = yarp.Vector(3)
+        for i in range(3):
+            position_yarp[i] = position[i]
+
+        tmp_quaternion = Quaternion(matrix = orientation)
+        tmp_axis = tmp_quaternion.axis
+        tmp_angle = tmp_quaternion.angle
+
+        axis_angle_yarp = yarp.Vector(4)
+        for i in range(3):
+            axis_angle_yarp[i] = tmp_axis[i]
+        axis_angle_yarp[3] = tmp_angle
+
+        cart.goToPoseSync(position_yarp, axis_angle_yarp)
+
 
 if __name__ == "__main__":
+
     # Init node
     rospy.init_node('grasping_benchmarks_manager')
 
@@ -504,10 +478,10 @@ if __name__ == "__main__":
     grasp_planner_service_name = rospy.get_param("~grasp_planner_service_name")
     grasp_planner_service = rospy.get_param("~grasp_planner_service")
     new_grasp_service_name = rospy.get_param("~user_cmd_service_name")
-    robot_service_name = "panda_grasp" # rospy.get_param("/robot_service_name")
+    robot_name = "panda_grasp" # rospy.get_param("/robot_name")
 
     # Instantiate benchmark client class
-    bench_manager = GraspingBenchmarksManager(grasp_planner_service_name, grasp_planner_service, new_grasp_service_name, robot_service_name, verbose=True)
+    bench_manager = GraspingBenchmarksManager(grasp_planner_service_name, grasp_planner_service, new_grasp_service_name, robot_name, verbose=True)
 
     # Spin forever.
     rospy.spin()
