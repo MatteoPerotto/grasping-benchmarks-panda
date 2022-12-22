@@ -30,13 +30,13 @@ def complete_point_cloud(partial_pc):
 
     # import ipdb; ipdb.set_trace()
 
-    root = Path('/home/panda-user')
-    pc_dir =  (root / 'points')
-    pc_dir.mkdir(exist_ok=True)
+    #root = Path('/home/panda-user')
+    #pc_dir =  (root / 'points')
+    #pc_dir.mkdir(exist_ok=True)
 
-    i = len(list(pc_dir.glob('*')))
-    np.save(pc_dir / f'reconstruction_{i}', np.concatenate([complete, probabilities[..., np.newaxis]], axis=1))
-    np.save(pc_dir / f'partial_{i}', partial)
+    #i = len(list(pc_dir.glob('*')))
+    #np.save(pc_dir / f'reconstruction_{i}', np.concatenate([complete, probabilities[..., np.newaxis]], axis=1))
+    #np.save(pc_dir / f'partial_{i}', partial)
 
     # Return the point cloud in its original reference frame
     complete = Denormalize(Config.Processing)(complete, ctx)
@@ -46,8 +46,8 @@ def complete_point_cloud(partial_pc):
         o3d.geometry.PointCloud(points=o3d.utility.Vector3dVector(partial)).paint_uniform_color([0, 1, 1]),
         o3d.geometry.PointCloud(points=o3d.utility.Vector3dVector(complete)).paint_uniform_color([1, 0, 1]),
         ],
-        bg_color=(0,0,0,0),
-        show_skybox=False)
+        bg_color=(0,0,0,0))#,
+        #show_skybox=False)
 
     # print(complete)
     return complete
