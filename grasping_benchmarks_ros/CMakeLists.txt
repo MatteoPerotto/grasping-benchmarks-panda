@@ -21,6 +21,7 @@ add_service_files(
   FILES
   UserCmd.srv
   GraspPlanner.srv
+  ICubGrasp.srv
 )
 
 ## Generate added messages and services with any dependencies listed here

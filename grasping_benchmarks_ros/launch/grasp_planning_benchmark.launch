@@ -78,6 +78,9 @@
         <param name="grasp_planner_service"         value="$(arg grasp_planner_service)" />
     </node>
 
+    <node pkg="grasping_benchmarks_ros" name="tf_yarp_broadcaster" type="tf_yarp_broadcaster.py" output="screen"/>
+    <node pkg="grasping_benchmarks_ros" name="icub_interface" type="icub_interface.py" output="screen"/>
+
   </group>
 
   <!-- Run Superquadrics-based Grasp Planner -->
