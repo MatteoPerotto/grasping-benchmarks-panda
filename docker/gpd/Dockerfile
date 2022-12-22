@@ -270,7 +270,9 @@ RUN mkdir -p ${CATKIN_WS_DIR}/src && \
     cd ${CATKIN_WS_DIR} &&\
     catkin config --extend /opt/ros/${ROS_DISTRO} -DPYTHON_EXECUTABLE=/usr/bin/python3 -DCMAKE_BUILD_TYPE=Release -DGPD_ROS=ON -DPCL_DIR=${WS_INSTALL}/share/pcl-1.9 &&\
     catkin build  -j8 
-    
+
+#RUN pip install pyquaternion
+
 # Source things 
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
 	echo 'source ${CATKIN_WS_DIR}/devel/setup.bash' >> ~/.bashrc && \
